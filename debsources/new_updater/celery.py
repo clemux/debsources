@@ -12,12 +12,18 @@
 
 from __future__ import absolute_import
 
+from debsources.new_updater import celeryconfig
+
 from celery import Celery
+
 
 app = Celery('new_updater',
              broker='amqp://',
              backend='amqp://',
              include=['debsources.new_updater.tasks'])
+
+
+app.config_from_object(celeryconfig)
 
 if __name__ == '__main__':
     app.start()
