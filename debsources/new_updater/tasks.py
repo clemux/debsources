@@ -16,7 +16,8 @@ from .celery import app
 from debsources import fs_storage, db_storage
 from debsources.sqla_session import _get_engine_session
 
-from celery import Task
+from celery import chord, group, subtask, Task
+from celery.utils import worker_direct
 
 import os
 import six
@@ -46,12 +47,16 @@ session is returned to the session pool at the end of the execution
 
 @app.task
 def run_shell_hooks(pkg, event):
-    pass
+    print('running hook for {0}'.format(pkg['package']))
 
 
 @app.task
-def call_hooks(pkg, event):
-    pass
+def call_hooks(pkg, event, worker):
+    print(worker_direct(worker))
+    s = subtask(run_shell_hooks,
+                args=(pkg, 'add-package'),
+                options={'queue': worker})
+    s.apply_async()
 
 
 # main tasks
@@ -60,25 +65,34 @@ def call_hooks(pkg, event):
 
 @app.task
 def extract_new(mirror):
-    for pkg in mirror.ls():
-        s = add_package.s(pkg.description('testdata/sources'))
-        s.delay()
+    tasks = [add_package.s(pkg.description('testdata/sources'))
+             for pkg in mirror.ls()]
+    chord(tasks, finish.s()).delay()
+    return mirror
 
 
-@app.task(base=DBTask)
-def add_package(pkg):
+@app.task(base=DBTask, bind=True)
+def add_package(self, pkg):
+    worker = worker_direct(self.request.hostname).name
+
     pkgdir = pkg['extraction_dir']
+    workdir = os.getcwd()
     try:
         fs_storage.extract_package(pkg, pkgdir)
     except subprocess.CalledProcessError as e:
         print('extract error: {0} -- {1}'.format(e.returncode,
                                                  ' '.join(e.cmd)))
     else:
-        with session.begin_nested():
-            os.chdir(pkgdir)
-            db_storage.add_package(session, pkg, pkgdir, False)
-            s = call_hooks.s(pkg, 'add-package')
-            s.delay()
+        print('adding {0}'.format(pkg['package']))
+        os.chdir(pkgdir)
+        db_storage.add_package(session, pkg, pkgdir, False)
+        session.commit()
+
+        s = call_hooks.s(pkg, 'add-package', worker)
+        s.delay()
+
+    finally:
+        os.chdir(workdir)
 
 
 # update suites
