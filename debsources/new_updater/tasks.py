@@ -16,7 +16,7 @@ from .celery import app
 from debsources import fs_storage, db_storage
 from debsources.sqla_session import _get_engine_session
 
-from celery import chord, group, subtask, Task
+from celery import chord, group, Task
 from celery.utils import worker_direct
 
 import os
@@ -52,11 +52,7 @@ def run_shell_hooks(pkg, event):
 
 @app.task
 def call_hooks(pkg, event, worker):
-    print(worker_direct(worker))
-    s = subtask(run_shell_hooks,
-                args=(pkg, 'add-package'),
-                options={'queue': worker})
-    s.apply_async()
+    run_shell_hooks.apply_async((pkg, event), queue=worker)
 
 
 # main tasks
