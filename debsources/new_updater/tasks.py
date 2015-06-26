@@ -108,9 +108,9 @@ def update_metadata(mirror):
 
 @app.task
 def garbage_collect(mirror):
-    for pkg in mirror.ls():
-        s = rm_package.s(pkg.description())
-        s.delay()
+    tasks = [rm_package.s(pkg.description('testdata/sources'))
+             for pkg in mirror.ls()]
+    group(tasks)()
 
 
 @app.task(base=DBTask)
