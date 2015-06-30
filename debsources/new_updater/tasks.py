@@ -16,6 +16,9 @@ from .celery import app
 from debsources import fs_storage, db_storage
 from debsources.sqla_session import _get_engine_session
 
+# this import should be removed later
+from debsources.plugins.hook_hello import add_package as hello
+
 from celery import chord, group, Task
 from celery.utils import worker_direct
 
@@ -51,8 +54,17 @@ def run_shell_hooks(pkg, event):
 
 
 @app.task
-def call_hooks(pkg, event, worker):
+def call_hooks(pkg, pkgdir, file_table, event, worker):
+    # shell hooks
     run_shell_hooks.apply_async((pkg, event), queue=worker)
+
+    observers = {
+        'add-package': [('hello', hello)],
+    }
+
+    for (title, action) in observers[event]:
+        s = action.s(pkg, pkgdir, file_table)
+        s.delay()
 
 
 # main tasks
@@ -81,10 +93,10 @@ def add_package(self, pkg):
     else:
         print('adding {0}'.format(pkg['package']))
         os.chdir(pkgdir)
-        db_storage.add_package(session, pkg, pkgdir, False)
+        file_table = db_storage.add_package(session, pkg, pkgdir, False)
         session.commit()
 
-        s = call_hooks.s(pkg, 'add-package', worker)
+        s = call_hooks.s(pkg, pkgdir, file_table, 'add-package', worker)
         s.delay()
 
     finally:
