@@ -11,21 +11,21 @@
 
 from __future__ import absolute_import
 
-from debsources.new_updater.celery import app
+from celery import shared_task
 
 import logging
 
 conf = None
 
 
-@app.task
+@shared_task
 def add_package(pkg, pkgdir, file_table):
     global conf
     logging.debug('add-package %s %s' % (pkg, pkgdir))
     print('Hello %s %s %s.' % (pkg, pkgdir, file_table))
 
 
-@app.task
+@shared_task
 def rm_package(pkg, pkgdir, file_table):
     global conf
     logging.debug('rm-package %s %s' % (pkg, pkgdir))
