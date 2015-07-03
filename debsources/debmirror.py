@@ -173,9 +173,10 @@ class SourcePackage(deb822.Sources):
             'archive_area': self.archive_area(),
             'extraction_dir': self.extraction_dir(basedir),
             'vcs-browser': self.get('vcs-browser'),
-            'vcs_type': self.get('vcs_type'),
         }
 
+        # fill the 'VCS-{GIT,SVN,...}' field
+        # FIXME: duplicated code from db_storage.py
         vcs_key = None
         for vcs_type in VCS_TYPES:
             vcs_key = 'vcs-' + vcs_type
