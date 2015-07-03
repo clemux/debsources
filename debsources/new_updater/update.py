@@ -11,11 +11,15 @@
 # see the COPYING file at the top-level directory of this distribution and at
 # https://anonscm.debian.org/gitweb/?p=qa/debsources.git;a=blob;f=COPYING;hb=HEAD
 
-from __future__ import absolute_import
+from debsources.debmirror import SourceMirror
+from .tasks import extract_new
 
-from debsources.new_updater.update import do_update
 
+def do_update(mirror):
+    """
+    Starts the update
 
-if __name__ == '__main__':
-    print("Running updater...")
-    do_update('testdata/mirror')
+    :param: mirror path to the mirror
+    """
+    mirror = SourceMirror('testdata/mirror')
+    extract_new.apply_async((mirror,))
