@@ -17,6 +17,8 @@ import os
 from debian import deb822
 from debian.debian_support import version_compare
 
+from debsources.models import VCS_TYPES
+
 
 class SourcePackage(deb822.Sources):
     """Debian source package, as it appears in a source mirror
@@ -163,17 +165,24 @@ class SourcePackage(deb822.Sources):
         method.
         """
 
-        return {
+        d = {
             'package': self['package'],
             'version': self['version'],
             'prefix': self.prefix(),
             'dsc_path': self.dsc_path(),
             'archive_area': self.archive_area(),
             'extraction_dir': self.extraction_dir(basedir),
-            'vcs_browser': self.get('vcs_browser'),
-            'vcs_url': self.get('vcs_url'),
+            'vcs-browser': self.get('vcs-browser'),
             'vcs_type': self.get('vcs_type'),
-            }
+        }
+
+        vcs_key = None
+        for vcs_type in VCS_TYPES:
+            vcs_key = 'vcs-' + vcs_type
+            if vcs_key in self:
+                d[vcs_key] = self[vcs_key]
+
+        return d
 
 
 class SourceMirror(object):
