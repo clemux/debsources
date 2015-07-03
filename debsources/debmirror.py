@@ -169,7 +169,10 @@ class SourcePackage(deb822.Sources):
             'prefix': self.prefix(),
             'dsc_path': self.dsc_path(),
             'archive_area': self.archive_area(),
-            'extraction_dir': self.extraction_dir(basedir)
+            'extraction_dir': self.extraction_dir(basedir),
+            'vcs_browser': self.get('vcs_browser'),
+            'vcs_url': self.get('vcs_url'),
+            'vcs_type': self.get('vcs_type'),
             }
 
 
