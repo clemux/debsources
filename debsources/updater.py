@@ -196,7 +196,8 @@ def _add_package(pkg, conf, session, sticky=False):
             logging.warning('package %s has no extracion dir, skipping' % pkg)
             return
         if not conf['dry_run'] and 'fs' in conf['backends']:
-            fs_storage.extract_package(pkg, pkgdir)
+            fs_storage.extract_package(pkg.description(conf['sources_dir']),
+                                       pkgdir)
             os.chdir(pkgdir)
         with session.begin_nested():
             # single db session for package addition and hook execution: if the
@@ -204,8 +205,10 @@ def _add_package(pkg, conf, session, sticky=False):
             # tried again at next run)
             file_table = None
             if not conf['dry_run'] and 'db' in conf['backends']:
-                file_table = db_storage.add_package(session, pkg, pkgdir,
-                                                    sticky)
+                file_table = db_storage.add_package(
+                    session,
+                    pkg.description(conf['sources_dir']), pkgdir,
+                    sticky)
             exclude_files(session, pkg, pkgdir, file_table, conf['exclude'])
             if not conf['dry_run'] and 'hooks' in conf['backends']:
                 notify(conf, 'add-package', session, pkg, pkgdir, file_table)
