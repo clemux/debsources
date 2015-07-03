@@ -15,11 +15,13 @@ from debsources.debmirror import SourceMirror
 from .tasks import extract_new
 
 
-def do_update(mirror):
+def do_update(conf):
     """
     Starts the update
 
-    :param: mirror path to the mirror
+    :param: conf debsources configuration object
     """
-    mirror = SourceMirror('testdata/mirror')
-    extract_new.apply_async((mirror,))
+
+    mirror = SourceMirror(conf['mirror_dir'])
+    print(mirror)
+    extract_new.apply_async((conf, mirror))

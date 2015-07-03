@@ -54,13 +54,9 @@ def run_shell_hooks(pkg, event):
 
 
 @app.task
-def call_hooks(pkg, pkgdir, file_table, event, worker):
+def call_hooks(observers, pkg, pkgdir, file_table, event, worker):
     # shell hooks
     run_shell_hooks.apply_async((pkg, event), queue=worker)
-
-    observers = {
-        'add-package': [('hello', hello)],
-    }
 
     for (title, action) in observers[event]:
         s = action.s(pkg, pkgdir, file_table)
@@ -72,15 +68,15 @@ def call_hooks(pkg, pkgdir, file_table, event, worker):
 # extract new packages
 
 @app.task
-def extract_new(mirror):
-    tasks = [add_package.s(pkg.description('testdata/sources'))
+def extract_new(conf, mirror):
+    tasks = [add_package.s(conf, pkg.description(conf['sources_dir']))
              for pkg in mirror.ls()]
     chord(tasks, finish.s()).delay()
-    return mirror
+    return (conf, mirror)
 
 
 @app.task(base=DBTask, bind=True)
-def add_package(self, pkg):
+def add_package(self, conf, pkg):
     worker = worker_direct(self.request.hostname).name
 
     pkgdir = pkg['extraction_dir']
@@ -96,7 +92,8 @@ def add_package(self, pkg):
         file_table = db_storage.add_package(session, pkg, pkgdir, False)
         session.commit()
 
-        s = call_hooks.s(pkg, pkgdir, file_table, 'add-package', worker)
+        s = call_hooks.s(conf['observers'], pkg, pkgdir,
+                         file_table, 'add-package', worker)
         s.delay()
 
     finally:
@@ -129,8 +126,8 @@ def update_metadata(mirror):
 # collect garbage
 
 @app.task
-def garbage_collect(mirror):
-    tasks = [rm_package.s(pkg.description('testdata/sources'))
+def garbage_collect(conf, mirror):
+    tasks = [rm_package.s(pkg.description(conf['sources_dir']))
              for pkg in mirror.ls()]
     group(tasks)()
 

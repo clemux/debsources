@@ -13,9 +13,27 @@
 
 from __future__ import absolute_import
 
+import argparse
+import logging
+
+from debsources import mainlib
 from debsources.new_updater.update import do_update
 
 
 if __name__ == '__main__':
+    cmdline = argparse.ArgumentParser(description='Debsources updater')
+    mainlib.add_arguments(cmdline)
+    args = cmdline.parse_args()
+
+    conf = mainlib.load_conf(args.conffile or mainlib.guess_conffile())
+    mainlib.override_conf(conf, args)
+    mainlib.init_logging(conf, mainlib.log_level_of_verbosity(args.verbose))
+    logging.debug('loaded configuration from %s' % conf['conffile'])
+    conf['observers'], conf['file_exts'] = mainlib.load_hooks(conf)
+    mainlib.conf_warnings(conf)
+
+    print(conf)
+
+
     print("Running updater...")
-    do_update('testdata/mirror')
+    do_update(conf)
