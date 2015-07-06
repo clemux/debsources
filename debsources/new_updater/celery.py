@@ -12,9 +12,11 @@
 
 from __future__ import absolute_import
 
-from debsources.new_updater import celeryconfig
-
 from celery import Celery
+from celery.signals import celeryd_init
+
+from debsources import mainlib
+from debsources.new_updater import celeryconfig
 
 
 app = Celery('new_updater',
@@ -24,6 +26,13 @@ app = Celery('new_updater',
 
 
 app.config_from_object(celeryconfig)
+
+
+@celeryd_init.connect
+def configure_workers(sender=None, conf=None, **kwargs):
+    debsources_conf = mainlib.load_conf(mainlib.guess_conffile())
+    debsources_conf['observers'], debsources_conf['file_exts'] = \
+        mainlib.load_hooks(debsources_conf)
 
 if __name__ == '__main__':
     app.start()

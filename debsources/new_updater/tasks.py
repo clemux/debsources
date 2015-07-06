@@ -16,9 +16,6 @@ from .celery import app
 from debsources import fs_storage, db_storage
 from debsources.sqla_session import _get_engine_session
 
-# this import should be removed later
-from debsources.plugins.hook_hello import add_package as hello
-
 from celery import chord, group, Task
 from celery.utils import worker_direct
 
