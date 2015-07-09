@@ -14,6 +14,7 @@ from __future__ import absolute_import
 import logging
 import os
 
+from celery import shared_task
 from sqlalchemy import sql
 
 from debsources import db_storage
@@ -22,8 +23,8 @@ from debsources import hashutil
 
 from debsources.models import Checksum, File
 
+from debsources.new_updater.celery import session
 
-conf = None
 
 MY_NAME = 'checksums'
 MY_EXT = '.' + MY_NAME
@@ -48,8 +49,8 @@ def parse_checksums(path):
             yield (sha256, path)
 
 
-def add_package(session, pkg, pkgdir, file_table):
-    global conf
+@shared_task
+def add_package(conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
 
     sumsfile = sums_path(pkgdir)
@@ -109,10 +110,11 @@ def add_package(session, pkg, pkgdir, file_table):
             if insert_params:  # source packages shouldn't be empty but...
                 session.execute(insert_q, insert_params)
                 session.flush()
+            session.commit()
 
 
-def rm_package(session, pkg, pkgdir, file_table):
-    global conf
+@shared_task
+def rm_package(conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 
     if 'hooks.fs' in conf['backends']:
@@ -129,8 +131,6 @@ def rm_package(session, pkg, pkgdir, file_table):
 
 
 def init_plugin(debsources):
-    global conf
-    conf = debsources['config']
     debsources['subscribe']('add-package', add_package, title=MY_NAME)
     debsources['subscribe']('rm-package',  rm_package,  title=MY_NAME)
     debsources['declare_ext'](MY_EXT, MY_NAME)

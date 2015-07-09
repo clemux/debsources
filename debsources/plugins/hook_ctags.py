@@ -15,6 +15,7 @@ import logging
 import os
 import subprocess
 
+from celery import shared_task
 from sqlalchemy import sql
 
 from debsources import db_storage
@@ -22,8 +23,8 @@ from debsources import db_storage
 from debsources.models import Ctag, File
 from debsources.consts import MAX_KEY_LENGTH
 
+from debsources.new_updater.celery import session
 
-conf = None
 
 CTAGS_FLAGS = ['--recurse',
                '--excmd=number',
@@ -100,8 +101,8 @@ def parse_ctags(path):
                          (bad_tags - BAD_TAGS_THRESHOLD))
 
 
-def add_package(session, pkg, pkgdir, file_table):
-    global conf
+@shared_task
+def add_package(conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
 
     ctagsfile = ctags_path(pkgdir)
@@ -163,9 +164,11 @@ def add_package(session, pkg, pkgdir, file_table):
                 session.execute(insert_q, insert_params)
                 session.flush()
 
+            session.commit()
 
-def rm_package(session, pkg, pkgdir, file_table):
-    global conf
+
+@shared_task
+def rm_package(conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 
     if 'hooks.fs' in conf['backends']:
@@ -182,8 +185,6 @@ def rm_package(session, pkg, pkgdir, file_table):
 
 
 def init_plugin(debsources):
-    global conf
-    conf = debsources['config']
     debsources['subscribe']('add-package', add_package, title=MY_NAME)
     debsources['subscribe']('rm-package',  rm_package,  title=MY_NAME)
     debsources['declare_ext'](MY_EXT, MY_NAME)

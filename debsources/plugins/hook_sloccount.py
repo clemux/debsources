@@ -18,11 +18,13 @@ import subprocess
 
 import six
 
+from celery import shared_task
+
 from debsources import db_storage
 from debsources.models import SlocCount
 
+from debsources.new_updater.celery import session
 
-conf = None
 
 SLOCCOUNT_FLAGS = ['--addlangall']
 
@@ -68,8 +70,8 @@ def parse_sloccount(path):
     return slocs
 
 
-def add_package(session, pkg, pkgdir, file_table):
-    global conf
+@shared_task
+def add_package(conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
 
     slocfile = slocfile_path(pkgdir)
@@ -101,10 +103,11 @@ def add_package(session, pkg, pkgdir, file_table):
             for (lang, locs) in six.iteritems(slocs):
                 sloccount = SlocCount(db_package, lang, locs)
                 session.add(sloccount)
+            session.commit()
 
 
-def rm_package(session, pkg, pkgdir, file_table):
-    global conf
+@shared_task
+def rm_package(conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 
     if 'hooks.fs' in conf['backends']:
@@ -121,8 +124,6 @@ def rm_package(session, pkg, pkgdir, file_table):
 
 
 def init_plugin(debsources):
-    global conf
-    conf = debsources['config']
     debsources['subscribe']('add-package', add_package, title='sloccount')
     debsources['subscribe']('rm-package',  rm_package,  title='sloccount')
     debsources['declare_ext'](MY_EXT, MY_NAME)

@@ -15,12 +15,13 @@ import logging
 import os
 import subprocess
 
-from debsources import db_storage
+from celery import shared_task
 
+from debsources import db_storage
 from debsources.models import Metric
 
+from debsources.new_updater.celery import session
 
-conf = None
 
 MY_NAME = 'metrics'
 MY_EXT = '.stats'
@@ -36,8 +37,8 @@ def parse_metrics(path):
     return metrics
 
 
-def add_package(session, pkg, pkgdir, file_table):
-    global conf
+@shared_task
+def add_package(conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
 
     metric_type = 'size'
@@ -70,10 +71,11 @@ def add_package(session, pkg, pkgdir, file_table):
         if not metric:
             metric = Metric(db_package, metric_type, metric_value)
             session.add(metric)
+            session.commit()
 
 
-def rm_package(session, pkg, pkgdir, file_table):
-    global conf
+@shared_task
+def rm_package(conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 
     if 'hooks.fs' in conf['backends']:
@@ -90,8 +92,6 @@ def rm_package(session, pkg, pkgdir, file_table):
 
 
 def init_plugin(debsources):
-    global conf
-    conf = debsources['config']
     debsources['subscribe']('add-package', add_package, title=MY_NAME)
     debsources['subscribe']('rm-package',  rm_package,  title=MY_NAME)
     debsources['declare_ext'](MY_EXT, MY_NAME)
