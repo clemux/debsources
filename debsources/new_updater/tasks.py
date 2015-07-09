@@ -16,27 +16,12 @@ import six
 import os
 import subprocess
 
-from celery import chord, group, Task
+from celery import chord, group
 from celery.utils import worker_direct
 
 from debsources import fs_storage, db_storage
 
-from .celery import app, session
-
-
-# Base class for tasks accessing the database
-class DBTask(Task):
-    """Abstract class for tasks accessing the database. Ensures that the
-session is returned to the session pool at the end of the execution
-
-    From
-    http://prschmid.blogspot.fr/2013/04/using-sqlalchemy-with-celery-tasks.html
-
-    """
-    abstract = True
-
-    def after_return(self, *args, **kwargs):
-        session.remove()
+from .celery import app, session, DBTask
 
 
 # hooks

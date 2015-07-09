@@ -12,7 +12,7 @@
 
 from __future__ import absolute_import
 
-from celery import Celery
+from celery import Celery, Task
 from celery.signals import celeryd_init
 
 from sqlalchemy import create_engine
@@ -30,6 +30,21 @@ app = Celery('new_updater',
 
 
 app.config_from_object(celeryconfig)
+
+
+# Base class for tasks accessing the database
+class DBTask(Task):
+    """Abstract class for tasks accessing the database. Ensures that the
+session is returned to the session pool at the end of the execution
+
+    From
+    http://prschmid.blogspot.fr/2013/04/using-sqlalchemy-with-celery-tasks.html
+
+    """
+    abstract = True
+
+    def after_return(self, *args, **kwargs):
+        session.remove()
 
 
 @celeryd_init.connect
