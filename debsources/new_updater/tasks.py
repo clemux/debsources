@@ -11,10 +11,10 @@
 
 from __future__ import absolute_import
 
-from .celery import app
+from .celery import app, session
 
 from debsources import fs_storage, db_storage
-from debsources.sqla_session import _get_engine_session
+
 
 from celery import chord, group, Task
 from celery.utils import worker_direct
@@ -22,10 +22,6 @@ from celery.utils import worker_direct
 import os
 import six
 import subprocess
-
-
-engine, session = _get_engine_session('postgresql:///debsources',
-                                      verbose=False)
 
 
 # Base class for tasks accessing the database
