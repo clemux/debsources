@@ -37,8 +37,6 @@ def configure_workers(sender=None, conf=None, **kwargs):
     debsources_conf = mainlib.load_conf(mainlib.guess_conffile())
     debsources_conf['observers'], debsources_conf['file_exts'] = \
         mainlib.load_hooks(debsources_conf)
-    if debsources_conf.get('update_sync'):
-        conf.CELERY_ALWAYS_EAGER = True
 
     engine = create_engine(debsources_conf['db_uri'],
                            echo=False)
