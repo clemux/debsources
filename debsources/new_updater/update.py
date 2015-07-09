@@ -23,5 +23,4 @@ def do_update(conf):
     """
 
     mirror = SourceMirror(conf['mirror_dir'])
-    print(mirror)
     extract_new.apply_async((conf, mirror))

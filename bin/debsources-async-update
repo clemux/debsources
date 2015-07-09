@@ -32,8 +32,5 @@ if __name__ == '__main__':
     conf['observers'], conf['file_exts'] = mainlib.load_hooks(conf)
     mainlib.conf_warnings(conf)
 
-    print(conf)
-
-
     print("Running updater...")
     do_update(conf)
