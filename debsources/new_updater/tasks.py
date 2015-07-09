@@ -11,17 +11,17 @@
 
 from __future__ import absolute_import
 
-from .celery import app, session
+import six
 
-from debsources import fs_storage, db_storage
-
+import os
+import subprocess
 
 from celery import chord, group, Task
 from celery.utils import worker_direct
 
-import os
-import six
-import subprocess
+from debsources import fs_storage, db_storage
+
+from .celery import app, session
 
 
 # Base class for tasks accessing the database
