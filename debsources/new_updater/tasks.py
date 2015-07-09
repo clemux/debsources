@@ -43,17 +43,18 @@ session is returned to the session pool at the end of the execution
 
 @app.task
 def run_shell_hooks(pkg, event):
-    print('running hook for {0}'.format(pkg['package']))
+    print('running shell hook for {0}'.format(pkg['package']))
 
 
 @app.task
-def call_hooks(observers, pkg, pkgdir, file_table, event, worker):
+def call_hooks(conf, pkg, pkgdir, file_table, event, worker):
     # shell hooks
-    run_shell_hooks.apply_async((pkg, event), queue=worker)
+    run_shell_hooks.apply_async((pkg, event))
 
-    for (title, action) in observers[event]:
-        s = action.s(pkg, pkgdir, file_table)
-        s.delay()
+    for (title, action) in conf['observers'][event]:
+        print('running {0} on {1}...'.format(title, pkg['package']))
+        s = action.s(conf, pkg, pkgdir, file_table)
+        s.apply_async()
 
 
 # main tasks
@@ -85,7 +86,7 @@ def add_package(self, conf, pkg):
         file_table = db_storage.add_package(session, pkg, pkgdir, False)
         session.commit()
 
-        s = call_hooks.s(conf['observers'], pkg, pkgdir,
+        s = call_hooks.s(conf, pkg, pkgdir,
                          file_table, 'add-package', worker)
         s.delay()
 
