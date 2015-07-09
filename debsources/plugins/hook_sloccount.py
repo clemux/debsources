@@ -18,12 +18,10 @@ import subprocess
 
 import six
 
-from celery import shared_task
-
 from debsources import db_storage
 from debsources.models import SlocCount
 
-from debsources.new_updater.celery import session
+from debsources.new_updater.celery import app, session, DBTask
 
 
 SLOCCOUNT_FLAGS = ['--addlangall']
@@ -70,7 +68,7 @@ def parse_sloccount(path):
     return slocs
 
 
-@shared_task
+@app.task(base=DBTask)
 def add_package(conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
 
@@ -106,7 +104,7 @@ def add_package(conf, pkg, pkgdir, file_table):
             session.commit()
 
 
-@shared_task
+@app.task(base=DBTask)
 def rm_package(conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 

@@ -14,7 +14,6 @@ from __future__ import absolute_import
 import logging
 import os
 
-from celery import shared_task
 from sqlalchemy import sql
 
 from debsources import db_storage
@@ -23,7 +22,7 @@ from debsources import hashutil
 
 from debsources.models import Checksum, File
 
-from debsources.new_updater.celery import session
+from debsources.new_updater.celery import app, session, DBTask
 
 
 MY_NAME = 'checksums'
@@ -49,7 +48,7 @@ def parse_checksums(path):
             yield (sha256, path)
 
 
-@shared_task
+@app.task(base=DBTask)
 def add_package(conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
 
@@ -113,7 +112,7 @@ def add_package(conf, pkg, pkgdir, file_table):
             session.commit()
 
 
-@shared_task
+@app.task(base=DBTask)
 def rm_package(conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 

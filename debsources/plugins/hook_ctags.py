@@ -15,7 +15,6 @@ import logging
 import os
 import subprocess
 
-from celery import shared_task
 from sqlalchemy import sql
 
 from debsources import db_storage
@@ -23,7 +22,7 @@ from debsources import db_storage
 from debsources.models import Ctag, File
 from debsources.consts import MAX_KEY_LENGTH
 
-from debsources.new_updater.celery import session
+from debsources.new_updater.celery import app, session, DBTask
 
 
 CTAGS_FLAGS = ['--recurse',
@@ -101,7 +100,7 @@ def parse_ctags(path):
                          (bad_tags - BAD_TAGS_THRESHOLD))
 
 
-@shared_task
+@app.task(base=DBTask)
 def add_package(conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
 
@@ -167,7 +166,7 @@ def add_package(conf, pkg, pkgdir, file_table):
             session.commit()
 
 
-@shared_task
+@app.task(base=DBTask)
 def rm_package(conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 
