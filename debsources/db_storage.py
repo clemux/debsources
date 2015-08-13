@@ -19,7 +19,9 @@ from debsources.models import VCS_TYPES
 
 
 def add_package(session, pkg, pkgdir, sticky=False):
-    """Add `pkg` (a `debmirror.SourcePackage`) to the DB.
+    """Add `pkg` to the DB.
+
+    `pkg` is a dictionary created by the  SourcePackage.description()
 
     If `sticky` is set, also set the corresponding bit in the versions table.
 
@@ -68,10 +70,14 @@ def add_package(session, pkg, pkgdir, sticky=False):
         return file_table
 
 
-def rm_package(session, pkg, db_package):
-    """Remove a package (= debmirror.SourcePackage) from the Debsources db
+def rm_package(session, pkg):
+    """Remove a package from the Debsources db
+
+    :param dict pkg: dictionary crreated by SourcePackage.description()
     """
-    logging.debug('remove from db %s...' % pkg)
+    logging.debug('remove from db %s...' % pkg['package'])
+    db_package = session.query(Package).filter_by(package=pkg['package'],
+                                                  version=pkg['version'])
     session.delete(db_package)
     if not db_package.name.versions:
         # just removed last version, get rid of package too
