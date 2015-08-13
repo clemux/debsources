@@ -13,15 +13,24 @@ from __future__ import absolute_import
 
 import six
 
+import logging
 import os
 import subprocess
+import string
 
 from celery import chord, group
 from celery.utils import worker_direct
+from sqlalchemy import sql, not_
+
 
 from debsources import fs_storage, db_storage
+from debsources.consts import DEBIAN_RELEASES
+from debsources.models import (SuiteInfo, Suite, SuiteAlias, Package,
+                               HistorySize, HistorySlocCount)
 
 from .celery import app, session, DBTask
+
+BULK_FLUSH_THRESHOLD = 50000
 
 
 # hooks
@@ -81,18 +90,98 @@ def add_package(self, conf, pkg):
 
 # update suites
 
+def _add_suite(conf, session, suite, sticky=False, aliases=[]):
+    """add suite to the table of static suite info
+
+    """
+    suite_version = None
+    suite_reldate = None
+    if suite in DEBIAN_RELEASES:
+        suite_info = DEBIAN_RELEASES[suite]
+        suite_version = suite_info['version']
+        suite_reldate = suite_info['date']
+        if sticky:
+            assert suite_info['archived']
+    db_aliases = [SuiteAlias(alias=alias, suite=suite) for alias in aliases]
+    db_suite = SuiteInfo(suite, sticky=sticky,
+                         version=suite_version,
+                         release_date=suite_reldate,
+                         aliases=db_aliases)
+    if not conf['dry_run'] and 'db' in conf['backends']:
+        session.add(db_suite)
+
+
 @app.task(base=DBTask)
-def add_suite_package(suite, pkg_id):
-    pass
+def update_suites(sources, conf, mirror):
+    """update stage: sweep and recreate suite mappings
+
+    """
+    logging.info('update suites mappings...')
+    print('updating suites...')
+
+    # FIXME: this is ugly
+    tmp = sources
+    sources = dict()
+    for pkg in tmp:
+        sources[pkg[0]] = pkg[1:]
 
 
-@app.task
-def update_suites(mirror):
+    insert_q = sql.insert(Suite.__table__)
+    insert_params = []
+
+    # load suites aliases
+    suites_aliases = mirror.ls_suites_with_aliases()
+    if not conf['dry_run'] and 'db' in conf['backends']:
+        session.query(SuiteAlias).delete()
+
     for (suite, pkgs) in six.iteritems(mirror.suites):
+        if not conf['dry_run'] and 'db' in conf['backends']:
+            session.query(Suite).filter_by(suite=suite).delete()
         for pkg_id in pkgs:
-            s = add_suite_package.delay(suite, pkg_id)
-            s.delay()
-    pass
+            (pkg, version) = pkg_id
+            db_package = db_storage.lookup_package(session, pkg, version)
+            if not db_package:
+                logging.warn('package %s/%s not found in suite %s, skipping'
+                             % (pkg, version, suite))
+            else:
+                logging.debug('add suite mapping: %s/%s -> %s'
+                              % (pkg, version, suite))
+                params = {'package_id': db_package.id,
+                          'suite': suite}
+                insert_params.append(params)
+                if pkg_id in sources:
+                    # fill-in incomplete suite information in status
+                    sources[pkg_id][-1].append(suite)
+                else:
+                    # defensive measure to make update_suites() more reusable
+                    logging.warn('cannot find %s/%s during suite update'
+                                 % (pkg, version))
+        if not conf['dry_run'] and 'db' in conf['backends'] \
+           and len(insert_params) >= BULK_FLUSH_THRESHOLD:
+            session.execute(insert_q, insert_params)
+            session.flush()
+            insert_params = []
+
+        if not conf['dry_run'] and 'db' in conf['backends']:
+            session.query(SuiteInfo).filter_by(name=suite).delete()
+            _add_suite(conf, session, suite, aliases=suites_aliases[suite])
+
+    if not conf['dry_run'] and 'db' in conf['backends'] \
+       and insert_params:
+        session.execute(insert_q, insert_params)
+        session.commit()
+
+    # update sources.txt, now that we know the suite mappings
+    src_list_path = os.path.join(conf['cache_dir'], 'sources.txt')
+    with open(src_list_path + '.new', 'w') as src_list:
+        for pkg_id, src_entry in six.iteritems(sources):
+            fields = list(pkg_id)
+            fields.extend(src_entry[:-1])  # all except suites
+            fields.append(string.join(src_entry[-1], ','))
+            src_list.write(string.join(fields, '\t') + '\n')
+    os.rename(src_list_path + '.new', src_list_path)
+
+    return (conf, mirror)
 
 
 # update metadata
