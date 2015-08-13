@@ -88,6 +88,11 @@ def add_package(self, conf, pkg):
 
     finally:
         os.chdir(workdir)
+        pkg_id = pkg['package'], pkg['version']
+        dsc_rel = os.path.relpath(pkg['dsc_path'], conf['mirror_dir'])
+        pkgdir_rel = os.path.relpath(pkg['extraction_dir'],
+                                     conf['sources_dir'])
+        return (pkg_id, pkg['archive_area'], dsc_rel, pkgdir_rel, [])
 
 
 # update suites
