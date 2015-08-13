@@ -62,7 +62,7 @@ def call_hooks(conf, pkg, pkgdir, file_table, event, worker):
 def extract_new(conf, mirror):
     tasks = [add_package.s(conf, pkg.description(conf['sources_dir']))
              for pkg in mirror.ls()]
-    chord(tasks, finish.s()).delay()
+    chord(tasks, update_suites.s(conf, mirror)).delay()
     return (conf, mirror)
 
 
