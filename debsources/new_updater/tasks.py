@@ -45,26 +45,31 @@ def run_shell_hooks(pkg, event):
 
 
 @app.task
-def call_hooks(conf, pkg, pkgdir, file_table, event, worker):
+def call_hooks(conf, pkg, pkgdir, file_table, event,
+               callback=None, worker=None):
     # shell hooks
     run_shell_hooks.apply_async((pkg, event))
 
-    for (title, action) in conf['observers'][event]:
-        print('running {0} on {1}...'.format(title, pkg['package']))
-        s = action.s(conf, pkg, pkgdir, file_table)
-        s.apply_async()
-
+    tasks = [action.s(conf, pkg, pkgdir, file_table)
+             for (_, action) in conf['observers'][event]]
+    if callback is not None:
+        chord(tasks, callback).delay()
+    else:
+        group(tasks).delay()
 
 # main tasks
 
 # extract new packages
 
+
 @app.task
-def extract_new(conf, mirror):
+def extract_new(conf, mirror, callback=None):
     tasks = [add_package.s(conf, pkg.description(conf['sources_dir']))
              for pkg in mirror.ls()]
-    chord(tasks, update_suites.s(conf, mirror)).delay()
-    return (conf, mirror)
+    if callback is not None:
+        chord(tasks, callback).delay()
+    else:
+        group(tasks).delay()
 
 
 @app.task(base=DBTask, bind=True)
