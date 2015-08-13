@@ -29,6 +29,7 @@ from debsources import fs_storage, db_storage
 from debsources.consts import DEBIAN_RELEASES
 from debsources.models import (SuiteInfo, Suite, SuiteAlias, Package,
                                HistorySize, HistorySlocCount)
+from debsources.debmirror import SourcePackage
 
 from .celery import app, session, DBTask
 
@@ -133,7 +134,6 @@ def update_suites(sources, conf, mirror):
     for pkg in tmp:
         sources[pkg[0]] = pkg[1:]
 
-
     insert_q = sql.insert(Suite.__table__)
     insert_params = []
 
@@ -213,17 +213,62 @@ def update_metadata(conf, mirror):
 
 # collect garbage
 
+@app.task(base=DBTask, bind=True)
+def rm_package(self, pkg, conf):
+    logging.info("remove %s/%s..." % pkg['package'], pkg['version'])
+
+    worker = worker_direct(self.request.hostname).name
+    pkgdir = pkg['extraction_dir']
+    print('deleting: {0}-{1}'.format(pkg['package'], pkg['version']))
+    try:
+        if not conf['dry_run'] and 'hooks' in conf['backends']:
+            s = call_hooks.s(conf, pkg, pkgdir,
+                             None, 'rm-package', worker)
+            s.delay()
+
+        if not conf['dry_run'] and 'fs' in conf['backends']:
+            fs_storage.remove_package(pkg, pkgdir)
+        if not conf['dry_run'] and 'db' in conf['backends']:
+            db_storage.rm_package(session, pkg)
+    except:
+        logging.exception('failed to remove %s' % pkg['package'])
+
+
 @app.task
 def garbage_collect(conf, mirror):
-    tasks = [rm_package.s(pkg.description(conf['sources_dir']))
-             for pkg in mirror.ls()]
-    group(tasks)()
+    logging.info('garbage collection...')
+    for version in session.query(Package).filter(not_(Package.sticky)):
+        pkg = SourcePackage.from_db_model(version)
+        pkg_id = (pkg['package'], pkg['version'])
+        pkgdir = pkg.extraction_dir(conf['sources_dir'])
+        if pkg_id not in mirror.packages:
+            # package is in in Debsources db, but gone from mirror: we
+            # might have to garbage collect it (depending on expiry)
+            expire_days = conf['expire_days']
+            age = None
+            if os.path.exists(pkgdir):
+                age = datetime.now() - \
+                    datetime.fromtimestamp(os.path.getmtime(pkgdir))
+            if not age or age.days >= expire_days:
+                rm_package.delay(pkg, conf, db_package=version)
+            else:
+                logging.debug('not removing %s as it is too young' % pkg)
 
+        if conf['force_triggers']:
+            try:
+                call_hooks.delay(conf,
+                                 pkg.description(conf['source_dir']),
+                                 pkgdir,
+                                 None,
+                                 'rm-package')
 
-@app.task(base=DBTask)
-def rm_package(pkg):
-    print('deleting: {0}-{1}'.format(pkg['package'], pkg['version']))
-
+                call_hooks.delay(conf,
+                                 pkg.description(conf['sources_dir']),
+                                 None,
+                                 pkgdir,
+                                 'rm-package')
+            except:
+                logging.exception('trigger failure on %s' % pkg)
 
 # end callback
 
