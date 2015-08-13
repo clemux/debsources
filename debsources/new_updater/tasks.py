@@ -13,6 +13,8 @@ from __future__ import absolute_import
 
 import six
 
+from datetime import datetime
+from email.utils import formatdate
 import logging
 import os
 import subprocess
@@ -186,9 +188,21 @@ def update_suites(sources, conf, mirror):
 
 # update metadata
 
-@app.task
-def update_metadata(mirror):
-    pass
+@app.task(base=DBTask)
+def update_metadata(conf, mirror):
+    if not conf['dry_run'] and 'fs' in conf['backends']:
+        prefix_path = os.path.join(conf['cache_dir'], 'pkg-prefixes')
+        with open(prefix_path + '.new', 'w') as out:
+            for prefix in db_storage.pkg_prefixes(session):
+                out.write('%s\n' % prefix)
+        os.rename(prefix_path + '.new', prefix_path)
+
+    # update timestamp
+    if not conf['dry_run'] and 'fs' in conf['backends']:
+        timestamp_file = os.path.join(conf['cache_dir'], 'last-update')
+        with open(timestamp_file + '.new', 'w') as out:
+            out.write('%s\n' % formatdate())
+        os.rename(timestamp_file + '.new', timestamp_file)
 
 
 # collect garbage
