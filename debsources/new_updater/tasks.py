@@ -39,7 +39,8 @@ BULK_FLUSH_THRESHOLD = 50000
 
 @app.task
 def run_shell_hooks(pkg, event):
-    print('running shell hook for {0}'.format(pkg['package']))
+    # print('running shell hook for {0}'.format(pkg['package']))
+    pass
 
 
 @app.task
