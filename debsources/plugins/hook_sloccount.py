@@ -21,7 +21,7 @@ import six
 from debsources import db_storage
 from debsources.models import SlocCount
 
-from debsources.new_updater.celery import app, session, DBTask
+from debsources.new_updater.celery import app, DBTask
 
 
 SLOCCOUNT_FLAGS = ['--addlangall']
@@ -68,9 +68,10 @@ def parse_sloccount(path):
     return slocs
 
 
-@app.task(base=DBTask)
-def add_package(conf, pkg, pkgdir, file_table):
+@app.task(base=DBTask, bind=True)
+def add_package(self, conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
+    self.conf = conf
 
     slocfile = slocfile_path(pkgdir)
     slocfile_tmp = slocfile + '.new'
@@ -91,21 +92,21 @@ def add_package(conf, pkg, pkgdir, file_table):
 
     if 'hooks.db' in conf['backends']:
         slocs = parse_sloccount(slocfile)
-        db_package = db_storage.lookup_package(session, pkg['package'],
+        db_package = db_storage.lookup_package(self.session, pkg['package'],
                                                pkg['version'])
-        if not session.query(SlocCount).filter_by(package_id=db_package.id)\
-                                       .first():
+        if not self.session.query(SlocCount).filter_by(package_id=db_package.id)\
+                                            .first():
             # ASSUMPTION: if *a* loc count of this package has already been
             # added to the db in the past, then *all* of them have, as
             # additions are part of the same transaction
             for (lang, locs) in six.iteritems(slocs):
                 sloccount = SlocCount(db_package, lang, locs)
-                session.add(sloccount)
-            session.commit()
+                self.session.add(sloccount)
+            self.session.commit()
 
 
-@app.task(base=DBTask)
-def rm_package(conf, pkg, pkgdir, file_table):
+@app.task(base=DBTask, bind=True)
+def rm_package(self, conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 
     if 'hooks.fs' in conf['backends']:
@@ -114,11 +115,11 @@ def rm_package(conf, pkg, pkgdir, file_table):
             os.unlink(slocfile)
 
     if 'hooks.db' in conf['backends']:
-        db_package = db_storage.lookup_package(session, pkg['package'],
+        db_package = db_storage.lookup_package(self.session, pkg['package'],
                                                pkg['version'])
-        session.query(SlocCount) \
-               .filter_by(package_id=db_package.id) \
-               .delete()
+        self.session.query(SlocCount) \
+                    .filter_by(package_id=db_package.id) \
+                    .delete()
 
 
 def init_plugin(debsources):

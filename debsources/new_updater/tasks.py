@@ -24,14 +24,13 @@ from celery import chord, group
 from celery.utils import worker_direct
 from sqlalchemy import sql, not_
 
-
 from debsources import fs_storage, db_storage
 from debsources.consts import DEBIAN_RELEASES
-from debsources.models import (SuiteInfo, Suite, SuiteAlias, Package,
-                               HistorySize, HistorySlocCount)
+from debsources.models import (SuiteInfo, Suite, SuiteAlias, Package)
 from debsources.debmirror import SourcePackage
 
-from .celery import app, session, DBTask
+
+from .celery import app, DBTask
 
 BULK_FLUSH_THRESHOLD = 50000
 
@@ -74,24 +73,25 @@ def extract_new(conf, mirror, callback=None):
 
 @app.task(base=DBTask, bind=True)
 def add_package(self, conf, pkg):
-    worker = worker_direct(self.request.hostname).name
+    # copying the conf into a instance member for
+    # sqlalchemy session setup
+    self.conf = conf
 
     pkgdir = pkg['extraction_dir']
     workdir = os.getcwd()
     try:
         fs_storage.extract_package(pkg, pkgdir)
     except subprocess.CalledProcessError as e:
-        print('extract error: {0} -- {1}'.format(e.returncode,
-                                                 ' '.join(e.cmd)))
+        logging.error('extract error: {0} -- {1}'.format(e.returncode,
+                                                         ' '.join(e.cmd)))
     else:
-        print('adding {0}'.format(pkg['package']))
         os.chdir(pkgdir)
-        file_table = db_storage.add_package(session, pkg, pkgdir, False)
-        session.commit()
 
-        s = call_hooks.s(conf, pkg, pkgdir,
-                         file_table, 'add-package', worker)
-        s.delay()
+        file_table = db_storage.add_package(self.session, pkg, pkgdir, False)
+        self.session.commit()
+
+        call_hooks.delay(conf, pkg, pkgdir,
+                         file_table, 'add-package')
 
     finally:
         os.chdir(workdir)
@@ -125,12 +125,13 @@ def _add_suite(conf, session, suite, sticky=False, aliases=[]):
         session.add(db_suite)
 
 
-@app.task(base=DBTask)
-def update_suites(sources, conf, mirror):
+@app.task(base=DBTask, bind=True)
+def update_suites(self, sources, conf, mirror):
     """update stage: sweep and recreate suite mappings
 
     """
-    logging.info('update suites mappings...')
+    self.conf = conf
+    logging.debug('update suites mappings...')
     print('updating suites...')
 
     # FIXME: this is ugly
@@ -145,14 +146,14 @@ def update_suites(sources, conf, mirror):
     # load suites aliases
     suites_aliases = mirror.ls_suites_with_aliases()
     if not conf['dry_run'] and 'db' in conf['backends']:
-        session.query(SuiteAlias).delete()
+        self.session.query(SuiteAlias).delete()
 
     for (suite, pkgs) in six.iteritems(mirror.suites):
         if not conf['dry_run'] and 'db' in conf['backends']:
-            session.query(Suite).filter_by(suite=suite).delete()
+            self.session.query(Suite).filter_by(suite=suite).delete()
         for pkg_id in pkgs:
             (pkg, version) = pkg_id
-            db_package = db_storage.lookup_package(session, pkg, version)
+            db_package = db_storage.lookup_package(self.session, pkg, version)
             if not db_package:
                 logging.warn('package %s/%s not found in suite %s, skipping'
                              % (pkg, version, suite))
@@ -171,18 +172,19 @@ def update_suites(sources, conf, mirror):
                                  % (pkg, version))
         if not conf['dry_run'] and 'db' in conf['backends'] \
            and len(insert_params) >= BULK_FLUSH_THRESHOLD:
-            session.execute(insert_q, insert_params)
-            session.flush()
+            self.session.execute(insert_q, insert_params)
+            self.session.flush()
             insert_params = []
 
         if not conf['dry_run'] and 'db' in conf['backends']:
-            session.query(SuiteInfo).filter_by(name=suite).delete()
-            _add_suite(conf, session, suite, aliases=suites_aliases[suite])
+            self.session.query(SuiteInfo).filter_by(name=suite).delete()
+            _add_suite(conf, self.session, suite,
+                       aliases=suites_aliases[suite])
 
     if not conf['dry_run'] and 'db' in conf['backends'] \
        and insert_params:
-        session.execute(insert_q, insert_params)
-        session.commit()
+        self.session.execute(insert_q, insert_params)
+        self.session.commit()
 
     # update sources.txt, now that we know the suite mappings
     src_list_path = os.path.join(conf['cache_dir'], 'sources.txt')
@@ -199,12 +201,13 @@ def update_suites(sources, conf, mirror):
 
 # update metadata
 
-@app.task(base=DBTask)
-def update_metadata(conf, mirror):
+@app.task(base=DBTask, bind=True)
+def update_metadata(self, conf, mirror):
+    self.conf = conf
     if not conf['dry_run'] and 'fs' in conf['backends']:
         prefix_path = os.path.join(conf['cache_dir'], 'pkg-prefixes')
         with open(prefix_path + '.new', 'w') as out:
-            for prefix in db_storage.pkg_prefixes(session):
+            for prefix in db_storage.pkg_prefixes(self.session):
                 out.write('%s\n' % prefix)
         os.rename(prefix_path + '.new', prefix_path)
 
@@ -220,6 +223,7 @@ def update_metadata(conf, mirror):
 
 @app.task(base=DBTask, bind=True)
 def rm_package(self, pkg, conf):
+    self.conf = conf
     logging.info("remove %s/%s..." % pkg['package'], pkg['version'])
 
     worker = worker_direct(self.request.hostname).name
@@ -234,15 +238,16 @@ def rm_package(self, pkg, conf):
         if not conf['dry_run'] and 'fs' in conf['backends']:
             fs_storage.remove_package(pkg, pkgdir)
         if not conf['dry_run'] and 'db' in conf['backends']:
-            db_storage.rm_package(session, pkg)
+            db_storage.rm_package(self.session, pkg)
     except:
         logging.exception('failed to remove %s' % pkg['package'])
 
 
-@app.task
-def garbage_collect(conf, mirror):
+@app.task(base=DBTask, bind=True)
+def garbage_collect(self, conf, mirror):
+    self.conf = conf
     logging.info('garbage collection...')
-    for version in session.query(Package).filter(not_(Package.sticky)):
+    for version in self.session.query(Package).filter(not_(Package.sticky)):
         pkg = SourcePackage.from_db_model(version)
         pkg_id = (pkg['package'], pkg['version'])
         pkgdir = pkg.extraction_dir(conf['sources_dir'])
@@ -274,9 +279,3 @@ def garbage_collect(conf, mirror):
                                  'rm-package')
             except:
                 logging.exception('trigger failure on %s' % pkg)
-
-# end callback
-
-@app.task
-def finish(res):
-    print('Update finished.')

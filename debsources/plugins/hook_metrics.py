@@ -18,7 +18,7 @@ import subprocess
 from debsources import db_storage
 from debsources.models import Metric
 
-from debsources.new_updater.celery import app, session, DBTask
+from debsources.new_updater.celery import app, DBTask
 
 
 MY_NAME = 'metrics'
@@ -35,9 +35,10 @@ def parse_metrics(path):
     return metrics
 
 
-@app.task(base=DBTask)
-def add_package(conf, pkg, pkgdir, file_table):
+@app.task(base=DBTask, bind=True)
+def add_package(self, conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
+    self.conf = conf
 
     metric_type = 'size'
     metric_value = None
@@ -59,21 +60,21 @@ def add_package(conf, pkg, pkgdir, file_table):
             # from previous runs...
             metric_value = parse_metrics(metricsfile)[metric_type]
 
-        db_package = db_storage.lookup_package(session, pkg['package'],
+        db_package = db_storage.lookup_package(self.session, pkg['package'],
                                                pkg['version'])
-        metric = session.query(Metric) \
-                        .filter_by(package_id=db_package.id,
-                                   metric=metric_type,
-                                   value=metric_value) \
-                        .first()
+        metric = self.session.query(Metric) \
+                             .filter_by(package_id=db_package.id,
+                                        metric=metric_type,
+                                        value=metric_value) \
+                             .first()
         if not metric:
             metric = Metric(db_package, metric_type, metric_value)
-            session.add(metric)
-            session.commit()
+            self.session.add(metric)
+            self.session.commit()
 
 
-@app.task(base=DBTask)
-def rm_package(conf, pkg, pkgdir, file_table):
+@app.task(base=DBTask, bind=True)
+def rm_package(self, conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
 
     if 'hooks.fs' in conf['backends']:
@@ -82,11 +83,11 @@ def rm_package(conf, pkg, pkgdir, file_table):
             os.unlink(metricsfile)
 
     if 'hooks.db' in conf['backends']:
-        db_package = db_storage.lookup_package(session, pkg['package'],
+        db_package = db_storage.lookup_package(self.session, pkg['package'],
                                                pkg['version'])
-        session.query(Metric) \
-               .filter_by(package_id=db_package.id) \
-               .delete()
+        self.session.query(Metric) \
+                    .filter_by(package_id=db_package.id) \
+                    .delete()
 
 
 def init_plugin(debsources):

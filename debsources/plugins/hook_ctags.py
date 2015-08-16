@@ -22,7 +22,7 @@ from debsources import db_storage
 from debsources.models import Ctag, File
 from debsources.consts import MAX_KEY_LENGTH
 
-from debsources.new_updater.celery import app, session, DBTask
+from debsources.new_updater.celery import app, DBTask
 
 
 CTAGS_FLAGS = ['--recurse',
@@ -100,9 +100,10 @@ def parse_ctags(path):
                          (bad_tags - BAD_TAGS_THRESHOLD))
 
 
-@app.task(base=DBTask)
-def add_package(conf, pkg, pkgdir, file_table):
+@app.task(base=DBTask, bind=True)
+def add_package(self, conf, pkg, pkgdir, file_table):
     logging.debug('add-package %s' % pkg)
+    self.conf = conf
 
     ctagsfile = ctags_path(pkgdir)
     ctagsfile_tmp = ctagsfile + '.new'
@@ -118,14 +119,16 @@ def add_package(conf, pkg, pkgdir, file_table):
             os.rename(ctagsfile_tmp, ctagsfile)
 
     if 'hooks.db' in conf['backends']:
-        db_package = db_storage.lookup_package(session, pkg['package'],
+        db_package = db_storage.lookup_package(self.session, pkg['package'],
                                                pkg['version'])
         # poor man's cache for last <relpath, file_id>;
         # rely on the fact that ctags file are path-sorted
         curfile = {None: None}
         insert_q = sql.insert(Ctag.__table__)
         insert_params = []
-        if not session.query(Ctag).filter_by(package_id=db_package.id).first():
+        if not self.session.query(Ctag)\
+                           .filter_by(package_id=db_package.id)\
+                           .first():
             # ASSUMPTION: if *a* ctag of this package has already been added to
             # the db in the past, then *all* of them have, as additions are
             # part of the same transaction
@@ -146,29 +149,31 @@ def add_package(conf, pkg, pkgdir, file_table):
                     try:
                         params['file_id'] = curfile[relpath]
                     except KeyError:
-                        file_ = session.query(File) \
-                                       .filter_by(package_id=db_package.id,
-                                                  path=relpath) \
-                                       .first()
+                        file_ = self.session.query(File) \
+                                            .filter_by(
+                                                package_id=db_package.id,
+                                                path=relpath) \
+                                            .first()
                         if not file_:
                             continue
                         curfile = {relpath: file_.id}
                         params['file_id'] = file_.id
                 insert_params.append(params)
                 if len(insert_params) >= BULK_FLUSH_THRESHOLD:
-                    session.execute(insert_q, insert_params)
-                    session.flush()
+                    self.session.execute(insert_q, insert_params)
+                    self.session.flush()
                     insert_params = []
             if insert_params:  # might be empty if there are no ctags at all!
-                session.execute(insert_q, insert_params)
-                session.flush()
+                self.session.execute(insert_q, insert_params)
+                self.session.flush()
 
-            session.commit()
+            self.session.commit()
 
 
-@app.task(base=DBTask)
-def rm_package(conf, pkg, pkgdir, file_table):
+@app.task(base=DBTask, bind=True)
+def rm_package(self, conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
+    self.conf = conf
 
     if 'hooks.fs' in conf['backends']:
         ctagsfile = ctags_path(pkgdir)
@@ -176,11 +181,11 @@ def rm_package(conf, pkg, pkgdir, file_table):
             os.unlink(ctagsfile)
 
     if 'hooks.db' in conf['backends']:
-        db_package = db_storage.lookup_package(session, pkg['package'],
+        db_package = db_storage.lookup_package(self.session, pkg['package'],
                                                pkg['version'])
-        session.query(Ctag) \
-               .filter_by(package_id=db_package.id) \
-               .delete()
+        self.session.query(Ctag) \
+                    .filter_by(package_id=db_package.id) \
+                    .delete()
 
 
 def init_plugin(debsources):

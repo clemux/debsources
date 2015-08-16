@@ -22,7 +22,7 @@ from debsources import hashutil
 
 from debsources.models import Checksum, File
 
-from debsources.new_updater.celery import app, session, DBTask
+from debsources.new_updater.celery import app, DBTask
 
 
 MY_NAME = 'checksums'
@@ -48,8 +48,9 @@ def parse_checksums(path):
             yield (sha256, path)
 
 
-@app.task(base=DBTask)
-def add_package(conf, pkg, pkgdir, file_table):
+@app.task(base=DBTask, bind=True)
+def add_package(self, conf, pkg, pkgdir, file_table):
+    self.conf = conf
     logging.debug('add-package %s' % pkg)
 
     sumsfile = sums_path(pkgdir)
@@ -74,13 +75,13 @@ def add_package(conf, pkg, pkgdir, file_table):
             os.rename(sumsfile_tmp, sumsfile)
 
     if 'hooks.db' in conf['backends']:
-        db_package = db_storage.lookup_package(session, pkg['package'],
+        db_package = db_storage.lookup_package(self.session, pkg['package'],
                                                pkg['version'])
         insert_q = sql.insert(Checksum.__table__)
         insert_params = []
-        if not session.query(Checksum) \
-                      .filter_by(package_id=db_package.id) \
-                      .first():
+        if not self.session.query(Checksum) \
+                           .filter_by(package_id=db_package.id) \
+                           .first():
             # ASSUMPTION: if *a* checksum of this package has already
             # been added to the db in the past, then *all* of them have,
             # as additions are part of the same transaction
@@ -94,27 +95,28 @@ def add_package(conf, pkg, pkgdir, file_table):
                     except KeyError:
                         continue
                 else:
-                    file_ = session.query(File) \
-                                   .filter_by(package_id=db_package.id,
-                                              path=relpath) \
-                                   .first()
+                    file_ = self.session.query(File) \
+                                        .filter_by(package_id=db_package.id,
+                                                   path=relpath) \
+                                        .first()
                     if not file_:
                         continue
                     params['file_id'] = file_.id
                 insert_params.append(params)
                 if len(insert_params) >= BULK_FLUSH_THRESHOLD:
-                    session.execute(insert_q, insert_params)
-                    session.flush()
+                    self.session.execute(insert_q, insert_params)
+                    self.session.flush()
                     insert_params = []
             if insert_params:  # source packages shouldn't be empty but...
-                session.execute(insert_q, insert_params)
-                session.flush()
-            session.commit()
+                self.session.execute(insert_q, insert_params)
+                self.session.flush()
+            self.session.commit()
 
 
-@app.task(base=DBTask)
-def rm_package(conf, pkg, pkgdir, file_table):
+@app.task(base=DBTask, bind=True)
+def rm_package(self, conf, pkg, pkgdir, file_table):
     logging.debug('rm-package %s' % pkg)
+    self.conf = conf
 
     if 'hooks.fs' in conf['backends']:
         sumsfile = sums_path(pkgdir)
@@ -122,11 +124,11 @@ def rm_package(conf, pkg, pkgdir, file_table):
             os.unlink(sumsfile)
 
     if 'hooks.db' in conf['backends']:
-        db_package = db_storage.lookup_package(session, pkg['package'],
+        db_package = db_storage.lookup_package(self.session, pkg['package'],
                                                pkg['version'])
-        session.query(Checksum) \
-               .filter_by(package_id=db_package.id) \
-               .delete()
+        self.session.query(Checksum) \
+                    .filter_by(package_id=db_package.id) \
+                    .delete()
 
 
 def init_plugin(debsources):

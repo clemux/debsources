@@ -15,13 +15,10 @@ from __future__ import absolute_import
 from celery import Celery, Task
 from celery.signals import celeryd_init
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
-
 from debsources import mainlib
 from debsources.new_updater import celeryconfig
+from debsources.sqla_session import _get_engine_session
 
-session = scoped_session(sessionmaker())
 
 app = Celery('new_updater',
              broker='amqp://',
@@ -34,17 +31,28 @@ app.config_from_object(celeryconfig)
 
 # Base class for tasks accessing the database
 class DBTask(Task):
-    """Abstract class for tasks accessing the database. Ensures that the
-session is returned to the session pool at the end of the execution
+    """Abstract class for tasks accessing the database.
 
-    From
-    http://prschmid.blogspot.fr/2013/04/using-sqlalchemy-with-celery-tasks.html
+    Sets up the SQLAlchemy session according the debsources
+    configuration dictionary.
 
     """
     abstract = True
+    _session = None
 
     def after_return(self, *args, **kwargs):
-        session.remove()
+        if self._session is not None:
+            self._session.remove()
+
+    @property
+    def session(self):
+        if self._session is None:
+            # TODO: test for the self.conf existence
+            self.engine, self._session = _get_engine_session(
+                self.conf['db_uri'],
+                verbose=False)
+
+        return self._session
 
 
 @celeryd_init.connect
@@ -52,10 +60,6 @@ def configure_workers(sender=None, conf=None, **kwargs):
     debsources_conf = mainlib.load_conf(mainlib.guess_conffile())
     debsources_conf['observers'], debsources_conf['file_exts'] = \
         mainlib.load_hooks(debsources_conf)
-
-    engine = create_engine(debsources_conf['db_uri'],
-                           echo=False)
-    session.configure(bind=engine)
 
 
 if __name__ == '__main__':
