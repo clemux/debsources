@@ -9,6 +9,10 @@
 # see the COPYING file at the top-level directory of this distribution and at
 # https://anonscm.debian.org/gitweb/?p=qa/debsources.git;a=blob;f=COPYING;hb=HEAD
 
+from __future__ import absolute_import
+from __future__ import print_function
+
+import os
 import shutil
 import tempfile
 import unittest
@@ -24,8 +28,10 @@ from debsources.new_updater.celery import app
 from debsources.new_updater.tasks import extract_new, update_suites
 
 from debsources.tests.db_testing import DbTestFixture, DB_COMPARE_QUERIES
+from debsources.tests.testdata import *  # NOQA
+from debsources.tests.test_updater import (db_mv_tables_to_schema,
+                                           assert_dir_equal,)
 from debsources.tests.updater_testing import mk_conf
-from debsources.tests.test_updater import db_mv_tables_to_schema
 
 
 def assert_db_table_equal(test_subj, expected_schema, actual_schema, table):
@@ -81,3 +87,18 @@ class Updater(unittest.TestCase, DbTestFixture):
         assert_db_table_equal(self, 'ref', 'public', 'suites')
         assert_db_table_equal(self, 'ref', 'public', 'suites_aliases')
         assert_db_table_equal(self, 'ref', 'public', 'suites_info')
+
+        # sources/ dir comparison. Ignored patterns:
+        # - plugin result caches -> because most of them are in os.walk()
+        #   order, which is not stable
+        # - dpkg-source log stored in *.log
+        # - all hook result files
+        # - stats files
+        exclude_pat = ['*' + ext for ext in self.conf['file_exts']] \
+            + ['*.log'] + ['*.stats'] + ['*.checksums'] + ['*.ctags'] \
+            + ['*.sloccount']
+
+        assert_dir_equal(self,
+                         os.path.join(self.tmpdir, 'sources'),
+                         os.path.join(TEST_DATA_DIR, 'sources'),
+                         exclude=exclude_pat)
