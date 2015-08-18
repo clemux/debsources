@@ -46,6 +46,16 @@ DB_COMPARE_QUERIES = {
      ORDER BY package_names.name, packages.version, suite \
      LIMIT 100",
 
+    "suites_aliases":
+    "SELECT alias, suite \
+     FROM %(schema)s.suites_aliases \
+     ORDER BY alias",
+
+    "suites_info":
+    "SELECT name, version, release_date, sticky \
+     FROM %(schema)s.suites_info \
+     ORDER BY name",
+
     "files":
     "SELECT package_names.name, packages.version, files.path \
      FROM %(schema)s.files, %(schema)s.packages, %(schema)s.package_names \
