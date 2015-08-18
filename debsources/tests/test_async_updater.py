@@ -16,11 +16,12 @@ import unittest
 
 # from nose.tools import istest
 from nose.plugins.attrib import attr
+from nose.tools import istest
 
 from debsources import mainlib
 from debsources.debmirror import SourceMirror
 from debsources.new_updater.celery import app
-from debsources.new_updater.tasks import extract_new
+from debsources.new_updater.tasks import extract_new, update_suites
 
 from debsources.tests.db_testing import DbTestFixture, DB_COMPARE_QUERIES
 from debsources.tests.updater_testing import mk_conf
@@ -62,15 +63,21 @@ class Updater(unittest.TestCase, DbTestFixture):
         cls.db_teardown_cls()
         shutil.rmtree(cls.tmpdir)
 
-    def testExtractNew(self):
-        extract_new(self.conf, self.mirror)
+    @istest
+    def extractNewUpdateSuites(self):
+        extract_new(self.conf, self.mirror,
+                    callback=update_suites.s(self.conf, self.mirror))
         add_package = app.tasks[
             'debsources.new_updater.tasks.add_package'
         ]
         add_package.session.close()
         add_package.engine.dispose()
+        update_suites.session.close()
+        update_suites.engine.dispose()
 
         assert_db_table_equal(self, 'ref', 'public', 'packages')
         assert_db_table_equal(self, 'ref', 'public', 'package_names')
         assert_db_table_equal(self, 'ref', 'public', 'files')
-
+        assert_db_table_equal(self, 'ref', 'public', 'suites')
+        assert_db_table_equal(self, 'ref', 'public', 'suites_aliases')
+        assert_db_table_equal(self, 'ref', 'public', 'suites_info')
