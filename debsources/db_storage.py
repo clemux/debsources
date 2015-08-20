@@ -73,15 +73,27 @@ def add_package(session, pkg, pkgdir, sticky=False):
 def rm_package(session, pkg):
     """Remove a package from the Debsources db
 
-    :param dict pkg: dictionary crreated by SourcePackage.description()
+    :param dict pkg: dictionary created by SourcePackage.description()
     """
     logging.debug('remove from db %s...' % pkg['package'])
-    db_package = session.query(Package).filter_by(package=pkg['package'],
-                                                  version=pkg['version'])
+
+    # FIXME: make that a single query
+    package_name = session.query(PackageName) \
+                          .filter_by(name=pkg['package']).first()
+    db_package = session.query(Package).filter(
+        Package.name_id == package_name.id,
+        Package.version == pkg['version']) \
+        .first()
+    if db_package is None:
+        # we don't want an exception if rm_package has been called
+        # twice for some reason
+        logging.debug('not removing %s/%s, as it does not exist anymore')
+        return
     session.delete(db_package)
     if not db_package.name.versions:
         # just removed last version, get rid of package too
         session.delete(db_package.name)
+    session.commit()
 
 
 def lookup_package(session, package, version):
