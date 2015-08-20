@@ -222,13 +222,11 @@ def update_metadata(self, conf, mirror):
 # collect garbage
 
 @app.task(base=DBTask, bind=True)
-def rm_package(self, pkg, conf):
+def rm_package(self, conf, pkg):
     self.conf = conf
-    logging.info("remove %s/%s..." % pkg['package'], pkg['version'])
-
+    logging.info("remove %s/%s..." % (pkg['package'], pkg['version']))
     worker = worker_direct(self.request.hostname).name
     pkgdir = pkg['extraction_dir']
-    print('deleting: {0}-{1}'.format(pkg['package'], pkg['version']))
     try:
         if not conf['dry_run'] and 'hooks' in conf['backends']:
             s = call_hooks.s(conf, pkg, pkgdir,
@@ -247,8 +245,13 @@ def rm_package(self, pkg, conf):
 def garbage_collect(self, conf, mirror):
     self.conf = conf
     logging.info('garbage collection...')
+
+    # tasks that will be run in a group
+    tasks = list()
+
     for version in self.session.query(Package).filter(not_(Package.sticky)):
         pkg = SourcePackage.from_db_model(version)
+
         pkg_id = (pkg['package'], pkg['version'])
         pkgdir = pkg.extraction_dir(conf['sources_dir'])
         if pkg_id not in mirror.packages:
@@ -259,19 +262,16 @@ def garbage_collect(self, conf, mirror):
             if os.path.exists(pkgdir):
                 age = datetime.now() - \
                     datetime.fromtimestamp(os.path.getmtime(pkgdir))
+
             if not age or age.days >= expire_days:
-                rm_package.delay(pkg, conf, db_package=version)
+                tasks.append(rm_package.s(
+                    conf,
+                    pkg.description(conf['sources_dir'])))
             else:
                 logging.debug('not removing %s as it is too young' % pkg)
 
         if conf['force_triggers']:
             try:
-                call_hooks.delay(conf,
-                                 pkg.description(conf['source_dir']),
-                                 pkgdir,
-                                 None,
-                                 'rm-package')
-
                 call_hooks.delay(conf,
                                  pkg.description(conf['sources_dir']),
                                  None,
@@ -279,3 +279,5 @@ def garbage_collect(self, conf, mirror):
                                  'rm-package')
             except:
                 logging.exception('trigger failure on %s' % pkg)
+
+    group(tasks).delay()
