@@ -64,22 +64,36 @@ class Updater(unittest.TestCase, DbTestFixture):
 
         app.conf['CELERY_ALWAYS_EAGER'] = True
 
+        # list of tasks instances whose session and engine we need to
+        # cleanup at the end in tearDownClass
+        cls.tasks_cleanup = []
+
     @classmethod
     def tearDownClass(cls):
+        for task in cls.tasks_cleanup:
+            # if the tasks have not been run at least once, session and
+            # engine will be empty
+            if task.session is not None:
+                task.session.close()
+                task.engine.dispose()
         cls.db_teardown_cls()
         shutil.rmtree(cls.tmpdir)
 
     @istest
     def extractNewUpdateSuites(self):
+        # update_suites needs data returned by extract_new, so we're
+        # testing it here
+
+        # a possible solution to avoid that would be to store
+        # extract_new's return value as a class attribute
+
         extract_new(self.conf, self.mirror,
                     callback=update_suites.s(self.conf, self.mirror))
-        add_package = app.tasks[
-            'debsources.new_updater.tasks.add_package'
-        ]
-        add_package.session.close()
-        add_package.engine.dispose()
-        update_suites.session.close()
-        update_suites.engine.dispose()
+
+        self.tasks_cleanup.extend([
+            app.tasks['debsources.new_updater.tasks.add_package'],
+            update_suites
+        ])
 
         assert_db_table_equal(self, 'ref', 'public', 'packages')
         assert_db_table_equal(self, 'ref', 'public', 'package_names')
