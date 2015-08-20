@@ -169,11 +169,16 @@ class SourcePackage(deb822.Sources):
             'package': self['package'],
             'version': self['version'],
             'prefix': self.prefix(),
-            'dsc_path': self.dsc_path(),
+
             'archive_area': self.archive_area(),
             'extraction_dir': self.extraction_dir(basedir),
             'vcs-browser': self.get('vcs-browser'),
         }
+
+        # SourcePackage instances created with from_db_model
+        # don't have the data required for calling dsc_path
+        if 'files' in self:
+            d['dsc_path'] = self.dsc_path()
 
         # fill the 'VCS-{GIT,SVN,...}' field
         # FIXME: duplicated code from db_storage.py
