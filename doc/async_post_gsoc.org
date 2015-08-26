@@ -1,0 +1,223 @@
+* How to make a proper celery canvas (1 week?)
+
+Problem: extract_new spawns add_package tasks. Each of add_package
+tasks spawns hook tasks
+
+
+#+BEGIN_SRC python
+  def extract_new(conf, mirror, callback):
+      tasks = [add_package.s(conf, pkg) for pkg in mirror.ls()]
+      # callback is run as soon as all tasks have returned
+      chord(tasks, callback).delay()
+
+  def add_package(conf, pkg):
+      # ...
+      # add package
+      # ...
+
+      status = stuff_for_update_suites
+
+      call_hooks.delay(conf, pkg, ..., 'add-package')
+      return status
+
+  def call_hooks(conf, pkg, pkgdir, file_table, event):
+      tasks = [action.s(conf, pkg, pkgdir, file_table)
+               for (_, action) in conf['observers'][event]]
+
+      group(tasks).delay()
+
+  def update_suites(conf, mirror):
+      # update suites
+
+  def garbage_collect(conf, mirror):
+      tasks = [rm_package.s(conf, pkg) for pkg in packages_to_delete]
+      group(tasks.delay)
+
+
+  extract_new.delay(conf, mirror, update_suites.si(conf, mirror))
+#+END_SRC
+
+** what happens when a task fails
+
+Documented in doc/celery.txt. By default on celery 3.1+, the chord's
+callback will not be executed, but this behavior can be disabled[1].
+
+[1] http://celery.readthedocs.org/en/latest/configuration.html#std:setting-CELERY_CHORD_PROPAGATES
+
+** hook tasks will still be running at the time update_suites is queued
+
+Not a problem for update_suites, garbage_collect, but it would be a
+problem for update_stats.
+
+It seems very unlikely that update_stats
+would be run before all hook tasks have ended, but it's not guaranteed.
+
+** how can I run garbage_collect after update_suites?
+
+I'm actually not sure if it's an issue that gc and update_suites are
+run in either order or simultaneously.
+
+For that matter, maybe rm_package tasks could be run at the same time
+as add_package tasks, since a new package would not be removed
+immediately?
+
+Anyway: update_suites must be run after all add_package tasks have
+finished, and update_stats needs to be run after all hooks tasks and
+the update_suites task have finished.
+
+** Solution most likely to work
+
+*** TODO instead of callbacks, block a task until some other tasks have finished
+
+Documentation here: http://ask.github.io/celery/userguide/tasksets.html#results
+
+
+
+
+
+** Other possible solutions
+
+Archived here in case one of them becomes useful.
+
+*** chain extract_new and garbage_collect
+
+I don't know if that would work. Is garbage_collect run:
+
+ - after update_suites? OK
+ - after extract_new has run? not OK, because add_package tasks could not all have ended
+
+
+#+BEGIN_SRC python
+
+  chain = (extract_new.delay(conf, mirror, update_suites.si(conf, mirror))
+           | garbage_collect.si(conf, mirror) | stats.si(conf, mirror) | ...)
+#+END_SRC
+
+
+*** chain add-package and hooks
+
+#+BEGIN_SRC python
+  def get_hooks(conf, pkg, event):
+      tasks = ...
+      return group(tasks)
+
+  def extract_new(conf, mirror, callback):
+      chains = []
+      for pkg in mirror.ls():
+          chain.append(add_package.s(conf, pkg) | get_hooks(conf, pkg, ...))
+      chord(chains, callback)
+
+  def add_package(conf, pkg):
+      # add package
+      return tasks
+
+  def run_task_list(tasks, callback=None):
+      if callback is not None:
+          return chord(tasks, callback)
+#+END_SRC
+
+Problem: I don't know if:
+
+ - I can put a group in a chain
+ - I can make a chord of chains, and if so, how they it would behave
+
+* Independent hooks (3 days)
+
+(1 day per task, even though the first two should take less time.)
+
+** TODO make it possible to run call_hooks outside add_package (1 day)
+
+Currently, the call_hooks task only works when called in add_package.
+
+Indeed, it needs the 'file_table' list of tuples created by add-package. However, it can be retrieved from the database, so it is straightforward to fix that.
+
+** TODO CLI tool for re-running one or all hooks (1 day)
+
+It should also run the update_stats and update_charts tasks.
+ 
+** TODO Unit test hooks (1 day))
+
+Should be easy once we can run the hooks separately from the extract_new stage.
+
+ - compare_db_table
+ - compare_dir (.ctags, .sloc and .checksums files)
+
+
+* Stats and charts (1 week)
+
+4 days + safety net -> 1 week
+
+** TODO simple port to two celery task (one stats, one charts) (1 day)
+
+Should be easy.
+
+** TODO unit test (1 day)
+
+Should be easy.
+
+** TODO split into several tasks (2 days)
+
+Because:
+
+ - performance (charts)
+ - don't compute stats for hooks not enabled
+
+*** stats [0/5]
+
+ - [ ] HistorySize
+ - [ ] HistorySlocCount
+ - [ ] HistorySize per suite
+ - [ ] HistorySlocCount per suite
+ - [ ] license stats
+
+
+*** charts [0/5]
+
+ - [ ] size charts
+ - [ ] sloccount historical histograms
+ - [ ] sloccount current pie charts
+ - [ ] sloccount bar chart plot
+ - [ ] license charts
+
+
+* Small/trivial tasks (1-2 days)
+
+** TODO missing dry_run in extract_new
+
+** TODO update_metadata stage
+
+** TODO cleanup git history for easier review
+
+** TODO rename 'new_updater' python module to 'updater'
+
+** TODO port copyright hook
+
+
+
+* Deployment (1 week)
+
+Assumption: for the moment, deployment only on tytso.
+
+(everything has been designed with a multiple machines setup in mind,
+though, but the deployment probably would be slightly harder in that
+case)
+
+** rabbitmq
+
+apt-get install rabbitmq should be enough, but I might have to check
+again for production-relevant settings.
+
+** celery worker services
+
+"bin/debsources-async-celery worker -c N" will spawn N worker processes
+
+*** TODO sysv service for the celery workers
+
+** TODO dry run with debug logging
+
+** TODO 
+
+
+* Planning
+
+~4 weeks
