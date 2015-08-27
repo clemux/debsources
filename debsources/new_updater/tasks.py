@@ -20,7 +20,10 @@ import os
 import subprocess
 import string
 
-from celery import chord, group
+from celery import chord, group, chain
+from celery.result import TaskSetResult
+from celery.task import subtask
+from celery.task.sets import TaskSet
 from celery.utils import worker_direct
 from sqlalchemy import sql, not_
 
@@ -33,6 +36,18 @@ from debsources.debmirror import SourcePackage
 from .celery import app, DBTask
 
 BULK_FLUSH_THRESHOLD = 50000
+
+
+# utilitary classes
+
+@app.task
+def join_taskset(setid, subtasks, callback, interval=3, max_retries=None):
+    result = TaskSetResult(setid, subtasks)
+    if result.ready():
+        result_joined = result.join()
+        print(result_joined)
+        return subtask(callback).delay(result_joined)
+    join_taskset.retry(countdown=interval, max_retries=max_retries)
 
 
 # hooks
@@ -63,12 +78,19 @@ def call_hooks(conf, pkg, pkgdir, file_table, event,
 
 @app.task
 def extract_new(conf, mirror, callback=None):
-    tasks = [add_package.s(conf, pkg.description(conf['sources_dir']))
-             for pkg in mirror.ls()]
-    if callback is not None:
-        chord(tasks, callback).delay()
-    else:
-        group(tasks).delay()
+    chains = []
+    for pkg in mirror.ls():
+        tasks = [add_package.s(conf, pkg.description(conf['sources_dir']))]
+        tasks.extend([action.s()
+                      for (_, action) in conf['observers']['add-package']])
+        chains.append(chain(*tasks))
+
+    return TaskSet(tasks=chains)
+
+#    if callback is not None:
+#        chord(tasks, callback).delay()
+#    else:
+#       group(tasks).delay()
 
 
 @app.task(base=DBTask, bind=True)
@@ -90,8 +112,8 @@ def add_package(self, conf, pkg):
         file_table = db_storage.add_package(self.session, pkg, pkgdir, False)
         self.session.commit()
 
-        call_hooks.delay(conf, pkg, pkgdir,
-                         file_table, 'add-package')
+        # call_hooks.delay(conf, pkg, pkgdir,
+        # file_table, 'add-package')
 
     finally:
         os.chdir(workdir)
@@ -99,7 +121,8 @@ def add_package(self, conf, pkg):
         dsc_rel = os.path.relpath(pkg['dsc_path'], conf['mirror_dir'])
         pkgdir_rel = os.path.relpath(pkg['extraction_dir'],
                                      conf['sources_dir'])
-        return (pkg_id, pkg['archive_area'], dsc_rel, pkgdir_rel, [])
+        return (conf, pkg, pkgdir, file_table,
+                (pkg_id, pkg['archive_area'], dsc_rel, pkgdir_rel, []))
 
 
 # update suites
@@ -135,7 +158,14 @@ def update_suites(self, sources, conf, mirror):
     print('updating suites...')
 
     # FIXME: this is ugly
-    tmp = sources
+
+    # because add_package and hooks are chained together, the
+    # 'sources' argument must be passed to the hooks tasks, along the
+    # arguments needed by those tasks. As a result, update_suites
+    # receives arguments that are useful only for hook tasks, and we
+    # must filter them out.
+
+    tmp = map(lambda x: x[-1], sources)
     sources = dict()
     for pkg in tmp:
         sources[pkg[0]] = pkg[1:]

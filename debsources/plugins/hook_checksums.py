@@ -49,7 +49,8 @@ def parse_checksums(path):
 
 
 @app.task(base=DBTask, bind=True)
-def add_package(self, conf, pkg, pkgdir, file_table):
+def add_package(self, args):
+    conf, pkg, pkgdir, file_table, _ = args
     self.conf = conf
     logging.debug('add-package %s' % pkg)
 
@@ -111,6 +112,7 @@ def add_package(self, conf, pkg, pkgdir, file_table):
                 self.session.execute(insert_q, insert_params)
                 self.session.flush()
             self.session.commit()
+    return args
 
 
 @app.task(base=DBTask, bind=True)

@@ -101,7 +101,8 @@ def parse_ctags(path):
 
 
 @app.task(base=DBTask, bind=True)
-def add_package(self, conf, pkg, pkgdir, file_table):
+def add_package(self, args):
+    conf, pkg, pkgdir, file_table, _ = args
     logging.debug('add-package %s' % pkg)
     self.conf = conf
 
@@ -168,6 +169,7 @@ def add_package(self, conf, pkg, pkgdir, file_table):
                 self.session.flush()
 
             self.session.commit()
+    return args
 
 
 @app.task(base=DBTask, bind=True)

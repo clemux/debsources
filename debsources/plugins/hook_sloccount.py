@@ -69,7 +69,8 @@ def parse_sloccount(path):
 
 
 @app.task(base=DBTask, bind=True)
-def add_package(self, conf, pkg, pkgdir, file_table):
+def add_package(self, args):
+    conf, pkg, pkgdir, file_table, _ = args
     logging.debug('add-package %s' % pkg)
     self.conf = conf
 
@@ -103,6 +104,8 @@ def add_package(self, conf, pkg, pkgdir, file_table):
                 sloccount = SlocCount(db_package, lang, locs)
                 self.session.add(sloccount)
             self.session.commit()
+
+    return args
 
 
 @app.task(base=DBTask, bind=True)

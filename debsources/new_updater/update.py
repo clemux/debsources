@@ -11,8 +11,10 @@
 # see the COPYING file at the top-level directory of this distribution and at
 # https://anonscm.debian.org/gitweb/?p=qa/debsources.git;a=blob;f=COPYING;hb=HEAD
 
+from __future__ import absolute_import
+
 from debsources.debmirror import SourceMirror
-from .tasks import extract_new
+from .tasks import extract_new, garbage_collect, update_suites, join_taskset
 
 
 def do_update(conf):
@@ -23,4 +25,9 @@ def do_update(conf):
     """
 
     mirror = SourceMirror(conf['mirror_dir'])
-    extract_new.apply_async((conf, mirror))
+    task_set = extract_new(conf, mirror)
+    job = task_set.apply_async()
+
+    chain = (update_suites.s(conf, mirror) | garbage_collect.si(conf, mirror))
+
+    join_taskset.delay(job.id, job.subtasks, chain)

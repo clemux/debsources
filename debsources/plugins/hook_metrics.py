@@ -36,7 +36,8 @@ def parse_metrics(path):
 
 
 @app.task(base=DBTask, bind=True)
-def add_package(self, conf, pkg, pkgdir, file_table):
+def add_package(self, args):
+    conf, pkg, pkgdir, file_table, _ = args
     logging.debug('add-package %s' % pkg)
     self.conf = conf
 
@@ -71,6 +72,8 @@ def add_package(self, conf, pkg, pkgdir, file_table):
             metric = Metric(db_package, metric_type, metric_value)
             self.session.add(metric)
             self.session.commit()
+
+    return args
 
 
 @app.task(base=DBTask, bind=True)
