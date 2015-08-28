@@ -41,11 +41,14 @@ BULK_FLUSH_THRESHOLD = 50000
 # utilitary classes
 
 @app.task
-def join_taskset(setid, subtasks, callback, interval=3, max_retries=None):
+def join_taskset(setid, subtasks, callback, interval=5, max_retries=None):
+    """ from
+    http://celery.readthedocs.org/en/next/userguide/tasksets.html#task-set-callbacks
+    """
+
     result = TaskSetResult(setid, subtasks)
     if result.ready():
         result_joined = result.join()
-        print(result_joined)
         return subtask(callback).delay(result_joined)
     join_taskset.retry(countdown=interval, max_retries=max_retries)
 
@@ -149,7 +152,7 @@ def _add_suite(conf, session, suite, sticky=False, aliases=[]):
 
 
 @app.task(base=DBTask, bind=True)
-def update_suites(self, sources, conf, mirror):
+def update_suites(self, args, conf, mirror):
     """update stage: sweep and recreate suite mappings
 
     """
@@ -165,9 +168,9 @@ def update_suites(self, sources, conf, mirror):
     # receives arguments that are useful only for hook tasks, and we
     # must filter them out.
 
-    tmp = map(lambda x: x[-1], sources)
+    args = map(lambda x: x[-1], args)
     sources = dict()
-    for pkg in tmp:
+    for pkg in args:
         sources[pkg[0]] = pkg[1:]
 
     insert_q = sql.insert(Suite.__table__)
