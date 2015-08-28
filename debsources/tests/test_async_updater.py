@@ -89,12 +89,14 @@ class Updater(unittest.TestCase, DbTestFixture):
         # a possible solution to avoid that would be to store
         # extract_new's return value as a class attribute
 
-        extract_new(self.conf, self.mirror,
-                    callback=update_suites.s(self.conf, self.mirror))
+        task_set = extract_new(self.conf, self.mirror)
+        res = task_set.apply()
+
+        update_suites.delay(res.get(), self.conf, self.mirror)
 
         self.tasks_cleanup.extend([
             app.tasks['debsources.new_updater.tasks.add_package'],
-            update_suites
+            update_suites,
         ])
 
         assert_db_table_equal(self, 'ref', 'public', 'packages')
