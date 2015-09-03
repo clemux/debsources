@@ -38,7 +38,7 @@ from .celery import app, DBTask
 BULK_FLUSH_THRESHOLD = 50000
 
 
-# utilitary classes
+# utilitary tasks
 
 @app.task
 def join_taskset(setid, subtasks, callback, interval=5, max_retries=None):
