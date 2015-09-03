@@ -17,6 +17,11 @@ from debsources.debmirror import SourceMirror
 from .tasks import extract_new, garbage_collect, update_suites, join_taskset
 
 
+def get_hook(conf, name, event):
+    hook_dict = dict(conf['observers'][event])
+    return hook_dict[name]
+
+
 def do_update(conf):
     """
     Starts the update

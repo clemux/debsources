@@ -28,6 +28,7 @@ from debsources.debmirror import SourceMirror
 from debsources.new_updater.celery import app
 from debsources.new_updater.tasks import (extract_new, update_suites,
                                           garbage_collect)
+from debsources.new_updater.update import get_hook
 
 from debsources.tests.db_testing import DbTestFixture, DB_COMPARE_QUERIES
 from debsources.tests.testdata import *  # NOQA
@@ -121,8 +122,41 @@ class Updater(unittest.TestCase, DbTestFixture):
                          os.path.join(TEST_DATA_DIR, 'sources'),
                          exclude=exclude_pat)
 
-    def testGarbageCollect(self):
+    @istest
+    def addChecksums(self):
+        self.conf['hooks'] = ['checksums']
+        obs, exts = mainlib.load_hooks(self.conf)
+        task = get_hook(self.conf, 'checksums', 'add-package')
+        for pkg in self.mirror.ls():
+            pkg_desc = pkg.description(self.conf['sources_dir'])
+            task.delay((self.conf,
+                        pkg_desc,
+                        pkg_desc['extraction_dir'],
+                        None,
+                        None))
 
+        self.tasks_cleanup.append(task)
+
+        assert_db_table_equal(self, 'ref', 'public', 'checksums')
+
+    @istest
+    def addCtags(self):
+        self.conf['hooks'] = ['ctags']
+        obs, exts = mainlib.load_hooks(self.conf)
+        task = get_hook(self.conf, 'ctags', 'add-package')
+        for pkg in self.mirror.ls():
+            pkg_desc = pkg.description(self.conf['sources_dir'])
+            task.delay((self.conf,
+                        pkg_desc,
+                        pkg_desc['extraction_dir'],
+                        None,
+                        None))
+
+        self.tasks_cleanup.append(task)
+
+        assert_db_table_equal(self, 'ref', 'public', 'ctags')
+
+    def testGarbageCollect(self):
         GC_PACKAGE = ('ocaml-curses', '1.0.3-1')
         PKG_SUITE = 'squeeze'
         PKG_AREA = 'main'
@@ -173,3 +207,4 @@ class Updater(unittest.TestCase, DbTestFixture):
         self.assertFalse(db_storage.lookup_package(self.session, *GC_PACKAGE),
                          'gone package %s/%s persisted in DB storage' %
                          GC_PACKAGE)
+
