@@ -109,23 +109,25 @@ def add_package(self, conf, pkg):
     except subprocess.CalledProcessError as e:
         logging.error('extract error: {0} -- {1}'.format(e.returncode,
                                                          ' '.join(e.cmd)))
+        raise Exception
     else:
         os.chdir(pkgdir)
 
         file_table = db_storage.add_package(self.session, pkg, pkgdir, False)
         self.session.commit()
 
-        # call_hooks.delay(conf, pkg, pkgdir,
-        # file_table, 'add-package')
-
-    finally:
-        os.chdir(workdir)
         pkg_id = pkg['package'], pkg['version']
         dsc_rel = os.path.relpath(pkg['dsc_path'], conf['mirror_dir'])
         pkgdir_rel = os.path.relpath(pkg['extraction_dir'],
                                      conf['sources_dir'])
         return (conf, pkg, pkgdir, file_table,
                 (pkg_id, pkg['archive_area'], dsc_rel, pkgdir_rel, []))
+
+        # call_hooks.delay(conf, pkg, pkgdir,
+        # file_table, 'add-package')
+
+    finally:
+        os.chdir(workdir)
 
 
 # update suites
