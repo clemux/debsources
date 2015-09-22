@@ -14,6 +14,7 @@ from __future__ import print_function
 
 import os
 import shutil
+import sqlalchemy
 import tempfile
 import unittest
 
@@ -23,7 +24,9 @@ from nose.plugins.attrib import attr
 from nose.tools import istest
 
 from debsources import db_storage
+from debsources import fs_storage
 from debsources import mainlib
+from debsources import models
 from debsources.debmirror import SourceMirror
 from debsources.new_updater.celery import app
 from debsources.new_updater.tasks import (extract_new, update_suites,
@@ -32,8 +35,7 @@ from debsources.new_updater.update import get_hook
 
 from debsources.tests.db_testing import DbTestFixture, DB_COMPARE_QUERIES
 from debsources.tests.testdata import *  # NOQA
-from debsources.tests.test_updater import (db_mv_tables_to_schema,
-                                           assert_dir_equal,)
+from debsources.tests.test_updater import assert_dir_equal
 from debsources.tests.updater_testing import mk_conf
 
 
@@ -50,6 +52,36 @@ def assert_db_table_equal(test_subj, expected_schema, actual_schema, table):
                                   % table)
 
 
+def create_db_schema(session, new_schema):
+    session.execute('CREATE SCHEMA %s' % new_schema)
+
+
+def db_mv_tables_to_schema(session, new_schema, move_tables=None):
+    tables = models.Base.metadata.tables.items()
+    if move_tables is not None:
+        tables = filter(lambda x: x[0] in move_tables, tables)
+
+    for tblname, table in tables:
+        session.execute('ALTER TABLE %s SET SCHEMA %s'
+                        % (tblname, new_schema))
+        session.execute(sqlalchemy.schema.CreateTable(table))
+
+
+def db_cp_tables_to_schema(session, src, dst, ignore_tables=None):
+    tables = models.Base.metadata.tables.items()
+
+    if ignore_tables is not None:
+        tables = filter(lambda x: x[0] not in ignore_tables, tables)
+
+    for tblname, table in tables:
+        session.execute('CREATE TABLE %s.%s AS SELECT * FROM %s.%s' % (
+            dst,
+            tblname,
+            src,
+            tblname
+        ))
+
+
 @attr('async')
 class Updater(unittest.TestCase, DbTestFixture):
     @classmethod
@@ -62,7 +94,6 @@ class Updater(unittest.TestCase, DbTestFixture):
         cls.conf['observers'], cls.conf['file_exts'] = obs, exts
         cls.mirror = SourceMirror(cls.conf['mirror_dir'])
 
-        db_mv_tables_to_schema(cls.session, 'ref')
         cls.session.commit()
 
         app.conf['CELERY_ALWAYS_EAGER'] = True
@@ -84,6 +115,7 @@ class Updater(unittest.TestCase, DbTestFixture):
 
     @istest
     def extractNewUpdateSuites(self):
+        print('testing extract new')
         # update_suites needs data returned by extract_new, so we're
         # testing it here
 
@@ -122,41 +154,7 @@ class Updater(unittest.TestCase, DbTestFixture):
                          os.path.join(TEST_DATA_DIR, 'sources'),
                          exclude=exclude_pat)
 
-    @istest
-    def addChecksums(self):
-        self.conf['hooks'] = ['checksums']
-        obs, exts = mainlib.load_hooks(self.conf)
-        task = get_hook(self.conf, 'checksums', 'add-package')
-        for pkg in self.mirror.ls():
-            pkg_desc = pkg.description(self.conf['sources_dir'])
-            task.delay((self.conf,
-                        pkg_desc,
-                        pkg_desc['extraction_dir'],
-                        None,
-                        None))
-
-        self.tasks_cleanup.append(task)
-
-        assert_db_table_equal(self, 'ref', 'public', 'checksums')
-
-    @istest
-    def addCtags(self):
-        self.conf['hooks'] = ['ctags']
-        obs, exts = mainlib.load_hooks(self.conf)
-        task = get_hook(self.conf, 'ctags', 'add-package')
-        for pkg in self.mirror.ls():
-            pkg_desc = pkg.description(self.conf['sources_dir'])
-            task.delay((self.conf,
-                        pkg_desc,
-                        pkg_desc['extraction_dir'],
-                        None,
-                        None))
-
-        self.tasks_cleanup.append(task)
-
-        assert_db_table_equal(self, 'ref', 'public', 'ctags')
-
-    def testGarbageCollect(self):
+    def garbageCollect(self):
         GC_PACKAGE = ('ocaml-curses', '1.0.3-1')
         PKG_SUITE = 'squeeze'
         PKG_AREA = 'main'
@@ -208,3 +206,136 @@ class Updater(unittest.TestCase, DbTestFixture):
                          'gone package %s/%s persisted in DB storage' %
                          GC_PACKAGE)
 
+
+@attr('hooks')
+class Hooks(unittest.TestCase, DbTestFixture):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.mkdtemp(suffix='.debsources-test')
+        cls.conf = mk_conf(cls.tmpdir)
+        cls.conf['hooks'] = []
+        obs, exts = mainlib.load_hooks(cls.conf)
+        cls.conf['observers'], cls.conf['file_exts'] = obs, exts
+        cls.mirror = SourceMirror(cls.conf['mirror_dir'])
+
+        for _pkg in cls.mirror.ls():
+            pkg = _pkg.description(cls.conf['sources_dir'])
+            fs_storage.extract_package(pkg, pkg['extraction_dir'])
+
+    def setUp(self):
+        self.db_setup()
+        create_db_schema(self.session, 'ref')
+        db_cp_tables_to_schema(self.session, 'public', 'ref', ignore_tables=[
+            'checksums',
+            'ctags',
+            'metric',
+            'sloccounts'
+            ])
+
+        self.session.commit()
+
+        app.conf['CELERY_ALWAYS_EAGER'] = True
+
+        # list of tasks instances whose session and engine we need to
+        # cleanup at the end in tearDownClass
+        self.tasks_cleanup = []
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmpdir)
+
+    def tearDown(self):
+        for task in self.tasks_cleanup:
+            # if the tasks have not been run at least once, session and
+            # engine will be empty
+            if task.session is not None:
+                task.session.close()
+                task.engine.dispose()
+        self.db_teardown()
+
+    @istest
+    def checksums(self):
+        db_mv_tables_to_schema(self.session, 'ref', move_tables=['checksums'])
+        self.session.commit()
+
+        self.conf['hooks'] = ['checksums']
+        obs, exts = mainlib.load_hooks(self.conf)
+        task = get_hook(self.conf, 'checksums', 'add-package')
+
+        for pkg in self.mirror.ls():
+            pkg_desc = pkg.description(self.conf['sources_dir'])
+            task.delay((self.conf,
+                        pkg_desc,
+                        pkg_desc['extraction_dir'],
+                        None,
+                        None))
+
+        self.tasks_cleanup.append(task)
+
+        assert_db_table_equal(self, 'ref', 'public', 'checksums')
+
+    @istest
+    def ctags(self):
+        db_mv_tables_to_schema(self.session, 'ref', move_tables=['ctags'])
+        self.session.commit()
+        print('tables moved')
+
+        self.conf['hooks'] = ['ctags']
+        obs, exts = mainlib.load_hooks(self.conf)
+        task = get_hook(self.conf, 'ctags', 'add-package')
+
+        for pkg in self.mirror.ls():
+            pkg_desc = pkg.description(self.conf['sources_dir'])
+            print('running ctags on %s' % pkg)
+            task.delay((self.conf,
+                        pkg_desc,
+                        pkg_desc['extraction_dir'],
+                        None,
+                        None))
+            print('DONE')
+
+        self.tasks_cleanup.append(task)
+
+        assert_db_table_equal(self, 'ref', 'public', 'ctags')
+
+    @istest
+    def metrics(self):
+        db_mv_tables_to_schema(self.session, 'ref', move_tables=['metric'])
+        self.session.commit()
+
+        self.conf['hooks'] = ['metrics']
+        obs, exts = mainlib.load_hooks(self.conf)
+        task = get_hook(self.conf, 'metrics', 'add-package')
+
+        for pkg in self.mirror.ls():
+            pkg_desc = pkg.description(self.conf['sources_dir'])
+            task.delay((self.conf,
+                        pkg_desc,
+                        pkg_desc['extraction_dir'],
+                        None,
+                        None))
+
+        self.tasks_cleanup.append(task)
+
+        assert_db_table_equal(self, 'ref', 'public', 'metric')
+
+    @istest
+    def sloccount(self):
+        db_mv_tables_to_schema(self.session, 'ref', move_tables=['sloccounts'])
+        self.session.commit()
+
+        self.conf['hooks'] = ['sloccount']
+        obs, exts = mainlib.load_hooks(self.conf)
+        task = get_hook(self.conf, 'sloccount', 'add-package')
+
+        for pkg in self.mirror.ls():
+            pkg_desc = pkg.description(self.conf['sources_dir'])
+            task.delay((self.conf,
+                        pkg_desc,
+                        pkg_desc['extraction_dir'],
+                        None,
+                        None))
+
+        self.tasks_cleanup.append(task)
+
+        assert_db_table_equal(self, 'ref', 'public', 'sloccounts')
